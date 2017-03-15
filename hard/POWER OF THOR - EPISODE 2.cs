@@ -23,21 +23,16 @@ class Move : IThorState
     }
     public void Execute(Thor thor)
     {
-        int prevX = thor.X;
-        int prevY = thor.Y;
-        // Calculate the mass center
-        int x = thor.Board.Giants.Sum(g => g.X) / thor.Board.Giants.Count;
-        int y = thor.Board.Giants.Sum(g => g.Y) / thor.Board.Giants.Count;
-        Console.Error.WriteLine($"Mass center: {x},{y}");
-        string direction = string.Empty;
-        if (y < thor.Y) { direction += "N"; prevY--; }
-        if (y > thor.Y) { direction += "S"; prevY++; }
-        if (x > thor.X) { direction += "E"; prevX++; }
-        if (x < thor.X) { direction += "W"; prevX--; }
-        if (IsSafeTravel(thor.Board, prevX, prevY, direction))
+        // Get basic direction toward mass center
+        string direction = thor.FSM.GlobalState.GetMoveDirection(thor);
+        int newX;
+        int newY;
+        if (!string.IsNullOrEmpty(direction) &&
+            thor.Board.IsSafeTravel(direction, out newX, out newY))
         {
-            thor.X = prevX;
-            thor.Y = prevY;
+            // move to safe spot
+            thor.X = newX;
+            thor.Y = newY;
             Console.WriteLine(direction);
         }
         else
@@ -48,12 +43,6 @@ class Move : IThorState
     public void Exit(Thor thor)
     {
         Console.Error.WriteLine("Leaving Move state.");
-    }
-    private bool IsSafeTravel(Board board, int x, int y, string direction)
-    {
-        if (string.IsNullOrEmpty(direction)) { return false; }
-        if (board.GiantsNearSpot(x, y, 1) != 0) { return false;}
-        return true;
     }
 }
 
@@ -81,49 +70,49 @@ class Herding : IThorState
     }
     public void Execute(Thor thor)
     {
-        Giant closest = thor.Board.Giants
-                            .OrderBy(g => Math.Abs(g.X - thor.X) + Math.Abs(g.Y - thor.X))
-                            .First();
-        int shiftX = closest.X - thor.X;
-        int shiftY = closest.Y - thor.Y;
+        // Get basic direction toward mass center
+        string direction = thor.FSM.GlobalState.GetMoveDirection(thor);
+        // if we are at the center move somewhere
+        if (string.IsNullOrEmpty(direction)) { direction = "N"; }
         
-        Console.Error.WriteLine($"{shiftX}, {shiftY}");
-        var newCoords = Retreat(thor, shiftX, shiftY);
-        if (IsSafeTravel(thor.Board, thor.X + newCoords.Item1, thor.Y + newCoords.Item2))
+        int newX;
+        int newY;
+        // Move to first left safe spot
+        for (int i = 0; i < 8 ;i++)
         {
-            string direction = string.Empty;
-            if (newCoords.Item2 == -1) { direction +="N"; thor.Y--; }
-            if (newCoords.Item2 == 1) { direction +="S"; thor.Y++; }
-            if (newCoords.Item1 == -1) { direction +="W"; thor.X--; }
-            if (newCoords.Item1 == 1) {direction +="E"; thor.X++;}
-            Console.WriteLine(direction);
+            if (thor.Board.IsSafeTravel(direction, out newX, out newY))
+            {
+                thor.X = newX;
+                thor.Y = newY;
+                Console.WriteLine(direction);
+                return;
+            }
+            else
+            {
+                direction = RotateLeft(direction);
+            }
         }
-        else
-        {
-            Console.WriteLine("STRIKE");
-        }
+        // Dead End
+        Console.WriteLine("STRIKE");
     }   
     public void Exit(Thor thor)
     {
         Console.Error.WriteLine("Leaving Herding state.");
     }
-    private Tuple<int, int> Retreat(Thor thor, int x, int y)
+    private string RotateLeft(string direction)
     {
-        if (x == 1 && y == 0) { return Tuple.Create(-1, -1); }
-        else if (x == 0 && y == 1) { return Tuple.Create(1, -1); }
-        else if (x == 0 && y == -1) { return Tuple.Create(-1, 1); }
-        else if (x == -1 && y == 0) { return Tuple.Create(1, 1); }
-        
-        else if (x == 1 && y == -1) { return Tuple.Create(-1, -1); }
-        else if (x == -1 && y == -1) { return Tuple.Create(-1, 1); }
-        else if (x == -1 && y == 1) { return Tuple.Create(1, 1); }
-        else if (x == 1 && y == 1) { return Tuple.Create(1, -1); }
-        return Tuple.Create(0, 0);
-    }
-    private bool IsSafeTravel(Board board, int x, int y)
-    {
-        if (board.GiantsNearSpot(x, y, 1) != 0) { return false;}
-        return true;
+        var shift = new Dictionary<string, string>()
+        {
+            {"N", "NW"},
+            {"NW", "W"},
+            {"W", "SW"},
+            {"SW", "S"},
+            {"S", "SE"},
+            {"SE", "E"},
+            {"E", "NE"},
+            {"NE", "N"}
+        };
+        return shift[direction];
     }
 }
 
@@ -161,8 +150,8 @@ class Global : IThorState
     }
     private bool IsSafe(Thor thor)
     {
-        int safeDistance = 1;
-        return thor.Board.GiantsNearSpot(thor.X, thor.Y, safeDistance) == 0;
+        int x, y;
+        return thor.Board.IsSafeTravel(string.Empty, out x, out y);
     }
     private bool EnoughGiantsAreNear(Thor thor)
     {
@@ -170,6 +159,17 @@ class Global : IThorState
         int strikeDistance = 4;
         return thor.Board.GiantsNearSpot(thor.X, thor.Y, strikeDistance) >=
             perHammerLeft;
+    }
+    public string GetMoveDirection(Thor thor)
+    {
+        // Calculate the mass center
+        Tuple<int, int> center = thor.Board.GetMassCenter();   
+        string direction = string.Empty;
+        if (center.Item2 < thor.Y) { direction += "N"; }
+        if (center.Item2 > thor.Y) { direction += "S"; }
+        if (center.Item1 > thor.X) { direction += "E"; }
+        if (center.Item1 < thor.X) { direction += "W"; }
+        return direction;
     }
 }
 
@@ -180,7 +180,7 @@ class StateMachine
     public IThorState MoveState { get; } = new Move();
     public IThorState StrikeState { get; } = new Strike();
     public IThorState HerdingState {get; } = new Herding();
-    public IThorState GlobalState {get; } = new Global();
+    public Global GlobalState {get; } = new Global();
     private IThorState currentState;
     public IThorState State
     {
@@ -207,7 +207,7 @@ class Thor
     public int Y { get; set; }
     public int H { get; set; }
     public StateMachine FSM { get; private set; }
-    public Board Board { get; } = new Board();
+    public Board Board { get; set; }
     
     public Thor()
     {
@@ -229,12 +229,30 @@ class Giant
 class Board
 {
     public List<Giant> Giants { get; } = new List<Giant>();
+    public Thor Thor { get; set; }
+    
     public void  Clear() { Giants.Clear(); }
-    public void Add(Giant giant ) { Giants.Add(giant); }
+    public void Add(Giant giant) { Giants.Add(giant); }
     public int GiantsNearSpot(int x, int y, int distance)
     {
         return Giants.Count(g => Math.Abs(g.X - x) <= distance &&
                                       Math.Abs(g.Y - y) <= distance);
+    }
+    public bool IsSafeTravel(string direction, out int x, out int y)
+    {
+        x = Thor.X;
+        y = Thor.Y;
+        if (direction.Contains("N")) { y--; }
+        if (direction.Contains("S")) { y++; }
+        if (direction.Contains("W")) { x--; }
+        if (direction.Contains("E")) { x++; }
+        return GiantsNearSpot(x, y, 1) == 0;
+    }
+    public Tuple<int, int> GetMassCenter()
+    {
+        return Tuple.Create(
+            Giants.Sum(g => g.X) / Giants.Count,
+            Giants.Sum(g => g.Y) / Giants.Count);
     }
 }
 
@@ -246,22 +264,25 @@ class Player
         inputs = Console.ReadLine().Split(' ');
         int TX = int.Parse(inputs[0]);
         int TY = int.Parse(inputs[1]);
+        Board board = new Board();
         Thor thor = new Thor{X = TX, Y = TY};
+        board.Thor = thor;
+        thor.Board = board;
         // game loop
         while (true)
         {
             inputs = Console.ReadLine().Split(' ');
             int H = int.Parse(inputs[0]); // the remaining number of hammer strikes.
             thor.H = H;
-            thor.Board.Clear();
+            board.Clear();
             int N = int.Parse(inputs[1]); // the number of giants which are still present on the map.
             for (int i = 0; i < N; i++)
             {
                 inputs = Console.ReadLine().Split(' ');
                 int X = int.Parse(inputs[0]);
                 int Y = int.Parse(inputs[1]);
-                thor.Board.Add(new Giant{X = X, Y = Y});
-                Console.Error.WriteLine($"Giant @ {X},{Y}");
+                board.Add(new Giant{X = X, Y = Y});
+                //Console.Error.WriteLine($"Giant @ {X},{Y}");
             }
             thor.Act();
         }
