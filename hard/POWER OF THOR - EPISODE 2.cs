@@ -30,19 +30,18 @@ class Move : IThorState
         int y = thor.Board.Giants.Sum(g => g.Y) / thor.Board.Giants.Count;
         Console.Error.WriteLine($"Mass center: {x},{y}");
         string direction = string.Empty;
-        if (y < thor.Y) { direction += "N"; thor.Y--; }
-        if (y > thor.Y) { direction += "S"; thor.Y++; }
-        if (x > thor.X) { direction += "E"; thor.X++; }
-        if (x < thor.X) { direction += "W"; thor.X--; }
-        if (IsSafeTravel(thor, direction))
+        if (y < thor.Y) { direction += "N"; prevY--; }
+        if (y > thor.Y) { direction += "S"; prevY++; }
+        if (x > thor.X) { direction += "E"; prevX++; }
+        if (x < thor.X) { direction += "W"; prevX--; }
+        if (IsSafeTravel(thor.Board, prevX, prevY, direction))
         {
+            thor.X = prevX;
+            thor.Y = prevY;
             Console.WriteLine(direction);
         }
         else
         {
-            // revert position
-            thor.X = prevX;
-            thor.Y = prevY;
             Console.WriteLine("WAIT");
         }
     }   
@@ -50,10 +49,10 @@ class Move : IThorState
     {
         Console.Error.WriteLine("Leaving Move state.");
     }
-    private bool IsSafeTravel(Thor thor, string direction)
+    private bool IsSafeTravel(Board board, int x, int y, string direction)
     {
         if (string.IsNullOrEmpty(direction)) { return false; }
-        if (thor.Board.GiantsNearSpot(thor.X, thor.Y, 1) != 0) { return false;}
+        if (board.GiantsNearSpot(x, y, 1) != 0) { return false;}
         return true;
     }
 }
@@ -82,15 +81,49 @@ class Herding : IThorState
     }
     public void Execute(Thor thor)
     {
-        //Giant farthest = thor.NearbyGiants
-        //                     .OrderByDescending(g => g.X *g.X + g.Y * g.Y)
-        //                     .First();
-        //Console.Error.WriteLine($"{farthest.X}, {farthest.Y}");
-        Console.WriteLine("STRIKE");
+        Giant closest = thor.Board.Giants
+                            .OrderBy(g => Math.Abs(g.X - thor.X) + Math.Abs(g.Y - thor.X))
+                            .First();
+        int shiftX = closest.X - thor.X;
+        int shiftY = closest.Y - thor.Y;
+        
+        Console.Error.WriteLine($"{shiftX}, {shiftY}");
+        var newCoords = Retreat(thor, shiftX, shiftY);
+        if (IsSafeTravel(thor.Board, thor.X + newCoords.Item1, thor.Y + newCoords.Item2))
+        {
+            string direction = string.Empty;
+            if (newCoords.Item2 == -1) { direction +="N"; thor.Y--; }
+            if (newCoords.Item2 == 1) { direction +="S"; thor.Y++; }
+            if (newCoords.Item1 == -1) { direction +="W"; thor.X--; }
+            if (newCoords.Item1 == 1) {direction +="E"; thor.X++;}
+            Console.WriteLine(direction);
+        }
+        else
+        {
+            Console.WriteLine("STRIKE");
+        }
     }   
     public void Exit(Thor thor)
     {
         Console.Error.WriteLine("Leaving Herding state.");
+    }
+    private Tuple<int, int> Retreat(Thor thor, int x, int y)
+    {
+        if (x == 1 && y == 0) { return Tuple.Create(-1, -1); }
+        else if (x == 0 && y == 1) { return Tuple.Create(1, -1); }
+        else if (x == 0 && y == -1) { return Tuple.Create(-1, 1); }
+        else if (x == -1 && y == 0) { return Tuple.Create(1, 1); }
+        
+        else if (x == 1 && y == -1) { return Tuple.Create(-1, -1); }
+        else if (x == -1 && y == -1) { return Tuple.Create(-1, 1); }
+        else if (x == -1 && y == 1) { return Tuple.Create(1, 1); }
+        else if (x == 1 && y == 1) { return Tuple.Create(1, -1); }
+        return Tuple.Create(0, 0);
+    }
+    private bool IsSafeTravel(Board board, int x, int y)
+    {
+        if (board.GiantsNearSpot(x, y, 1) != 0) { return false;}
+        return true;
     }
 }
 
@@ -113,7 +146,7 @@ class Global : IThorState
         {
             thor.FSM.State = thor.FSM.MoveState;
         }
-        else if (thor.H > 1 || EveryGiantIsNear(thor))
+        else if (EnoughGiantsAreNear(thor))
         {
             thor.FSM.State = thor.FSM.StrikeState;
         }
@@ -131,11 +164,12 @@ class Global : IThorState
         int safeDistance = 1;
         return thor.Board.GiantsNearSpot(thor.X, thor.Y, safeDistance) == 0;
     }
-    private bool EveryGiantIsNear(Thor thor)
+    private bool EnoughGiantsAreNear(Thor thor)
     {
-        int strikeDistance = 3;
-        return thor.Board.GiantsNearSpot(thor.X, thor.Y, strikeDistance) ==
-            thor.Board.Giants.Count;
+        int perHammerLeft = thor.Board.Giants.Count / thor.H;
+        int strikeDistance = 4;
+        return thor.Board.GiantsNearSpot(thor.X, thor.Y, strikeDistance) >=
+            perHammerLeft;
     }
 }
 
